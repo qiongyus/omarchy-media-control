@@ -13,6 +13,9 @@ Item {
   property real iconSize: Style.font.icon
   property real iconOffsetY: 0
 
+  property string tooltip: ""
+  property var bar: null
+
   signal clicked()
 
   implicitWidth: size
@@ -43,5 +46,8 @@ Item {
     hoverEnabled: true
     cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
     onClicked: if (root.enabled) root.clicked()
+    onEntered: if (root.bar && root.tooltip) root.bar.showTooltip(root, root.tooltip)
+    onExited: if (root.bar && root.tooltip) root.bar.hideTooltip(root)
   }
 }
+

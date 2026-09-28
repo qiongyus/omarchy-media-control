@@ -1,6 +1,8 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.Mpris
+import Quickshell.Hyprland
 import qs.Ui
 import qs.Commons
 
@@ -20,13 +22,57 @@ BarWidget {
   moduleName: "debba.media-control"
 
   readonly property var mediaService: bar?.shell?.firstPartyServiceFor("omarchy.media") ?? null
-  readonly property var activePlayer: mediaService ? mediaService.activePlayer : null
-  readonly property var sourcePlayers: mediaService ? mediaService.sourcePlayers : []
+
+  readonly property var rawPlayers: Mpris.players ? Mpris.players.values : []
+  property string preferredPlayerKey: ""
+
+  function playerKey(p) {
+    if (!p) return ""
+    return String(p.dbusName || p.desktopEntry || p.identity || "")
+  }
+
+  function selectPlayer(key) {
+    if (mediaService && typeof mediaService.selectPlayer === "function") {
+      mediaService.selectPlayer(key)
+    }
+    preferredPlayerKey = key
+  }
+
+  readonly property var sourcePlayers: {
+    if (mediaService && mediaService.sourcePlayers && mediaService.sourcePlayers.length > 0)
+      return mediaService.sourcePlayers
+    var list = []
+    for (var i = 0; i < rawPlayers.length; i++) {
+      var p = rawPlayers[i]
+      if (p && (p.trackTitle || p.trackArtist || p.identity || p.desktopEntry)) {
+        list.push(p)
+      }
+    }
+    return list
+  }
+
+  readonly property var activePlayer: {
+    if (mediaService && mediaService.activePlayer)
+      return mediaService.activePlayer
+    if (sourcePlayers.length === 0) return null
+    if (preferredPlayerKey) {
+      for (var i = 0; i < sourcePlayers.length; i++) {
+        if (playerKey(sourcePlayers[i]) === preferredPlayerKey) return sourcePlayers[i]
+      }
+    }
+    for (var j = 0; j < sourcePlayers.length; j++) {
+      if (sourcePlayers[j].isPlaying) return sourcePlayers[j]
+    }
+    for (var k = 0; k < sourcePlayers.length; k++) {
+      if (sourcePlayers[k].trackTitle || sourcePlayers[k].trackArtist) return sourcePlayers[k]
+    }
+    return sourcePlayers[0]
+  }
 
   readonly property bool hideWhenPaused: settings && settings.hideWhenPaused === true
-  readonly property int panelWidth: settings && settings.panelWidth > 0 ? settings.panelWidth : 340
+  readonly property int panelWidth: settings && settings.panelWidth > 0 ? settings.panelWidth : 360
 
-  readonly property bool hasMedia: activePlayer !== null && !!(activePlayer.trackTitle || activePlayer.trackArtist)
+  readonly property bool hasMedia: activePlayer !== null && !!(activePlayer.trackTitle || activePlayer.trackArtist || activePlayer.identity)
   readonly property bool isPlaying: activePlayer !== null && activePlayer.isPlaying
   readonly property bool shouldShow: hasMedia && (isPlaying || !hideWhenPaused || popupOpen)
 
@@ -67,15 +113,108 @@ BarWidget {
 
   onShouldShowChanged: if (!shouldShow) popupOpen = false
 
-  // omarchy-shell debba.media-control toggle|open|close|playPause|next|previous
+  function anyPopupOpen() {
+    var items = bar && typeof bar.moduleWidgets === "function"
+      ? bar.moduleWidgets(moduleName) : [root]
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] && items[i].popupOpen) return true
+    }
+    return false
+  }
+
+  function isFocusedBar() {
+    var win = root.QsWindow ? root.QsWindow.window : null
+    var scr = win ? win.screen : null
+    if (scr && typeof Hyprland !== "undefined" && Hyprland.focusedMonitor) {
+      return Hyprland.focusedMonitor.name === scr.name
+    }
+    return true
+  }
+
+  function togglePopup(): void {
+    if (!root.hasMedia) return
+    if (anyPopupOpen()) {
+      root.popupOpen = false
+    } else {
+      if (isFocusedBar()) {
+        root.popupOpen = true
+      }
+    }
+  }
+
+  function openPopup(): void {
+    if (root.hasMedia && isFocusedBar()) root.popupOpen = true
+  }
+
+  function closePopup(): void {
+    root.popupOpen = false
+  }
+
+  readonly property bool isLoopActive: activePlayer && (activePlayer.loopSupported !== false) && activePlayer.loopState !== MprisLoopState.None
+  readonly property string loopStatusText: {
+    if (!activePlayer || activePlayer.loopSupported === false) return "循环: 不支持"
+    if (activePlayer.loopState === MprisLoopState.Track) return "循环: 单曲循环"
+    if (activePlayer.loopState === MprisLoopState.Playlist) return "循环: 列表循环"
+    return "循环: 关闭"
+  }
+
+  function cycleRepeat(): void {
+    var p = root.activePlayer
+    if (!p) return
+    if (p.loopSupported === false) return
+    if (p.loopState === MprisLoopState.None) {
+      p.loopState = MprisLoopState.Playlist
+    } else if (p.loopState === MprisLoopState.Playlist) {
+      p.loopState = MprisLoopState.Track
+    } else {
+      p.loopState = MprisLoopState.None
+    }
+  }
+
+  property real savedVolume: 1.0
+
+  function seekDelta(seconds): void {
+    var p = root.activePlayer
+    if (!p || !p.canSeek) return
+    var len = p.lengthSupported && p.length > 0 ? p.length : 0
+    var cur = root.trackPosition
+    var target = cur + seconds
+    if (len > 0) target = Math.max(0, Math.min(len, target))
+    else target = Math.max(0, target)
+    p.position = target
+  }
+
+  function adjustVolume(delta): void {
+    var p = root.activePlayer
+    if (!p) return
+    if (typeof p.volume !== "undefined") {
+      p.volume = Math.max(0.0, Math.min(1.0, (p.volume || 0.0) + delta))
+    }
+  }
+
+  function toggleMute(): void {
+    var p = root.activePlayer
+    if (!p || typeof p.volume === "undefined") return
+    if (p.volume > 0.01) {
+      root.savedVolume = p.volume
+      p.volume = 0.0
+    } else {
+      p.volume = root.savedVolume > 0.05 ? root.savedVolume : 0.8
+    }
+  }
+
+  // omarchy-shell debba.media-control toggle|open|close|playPause|next|previous|repeat|stop
   IpcHandler {
     target: "debba.media-control"
-    function toggle(): void { if (root.hasMedia) root.popupOpen = !root.popupOpen }
-    function open(): void { if (root.hasMedia) root.popupOpen = true }
-    function close(): void { root.popupOpen = false }
+    function toggle(): void { root.broadcast("togglePopup") }
+    function open(): void { root.broadcast("openPopup") }
+    function close(): void { root.broadcast("closePopup") }
     function playPause(): void { root.act("playPause") }
     function next(): void { root.act("next") }
     function previous(): void { root.act("previous") }
+    function stop(): void { root.act("stop") }
+    function repeat(): void { root.cycleRepeat() }
+    function cycleRepeat(): void { root.cycleRepeat() }
   }
 
   function formatTime(seconds) {
@@ -90,8 +229,32 @@ BarWidget {
   }
 
   function act(action) {
-    if (!mediaService || !activePlayer) return
-    mediaService.runAction(action, false, mediaService.playerKey(activePlayer))
+    if (mediaService && typeof mediaService.runAction === "function") {
+      mediaService.runAction(action, false, playerKey(activePlayer))
+      return
+    }
+    var p = activePlayer
+    if (!p) return
+    if (action === "playPause") {
+      if (p.canTogglePlaying) p.togglePlaying()
+      else if (p.isPlaying && p.canPause) p.pause()
+      else if (!p.isPlaying && p.canPlay) p.play()
+    } else if (action === "next") {
+      if (p.canGoNext) p.next()
+    } else if (action === "previous") {
+      if (p.canGoPrevious) p.previous()
+    } else if (action === "stop") {
+      if (typeof p.stop === "function") p.stop()
+      else if (p.canPause) p.pause()
+    } else if (action === "repeat" || action === "cycleRepeat") {
+      root.cycleRepeat()
+    } else if (action === "play") {
+      if (p.canPlay) p.play()
+      else if (p.canTogglePlaying) p.togglePlaying()
+    } else if (action === "pause") {
+      if (p.canPause) p.pause()
+      else if (p.canTogglePlaying) p.togglePlaying()
+    }
   }
 
   visible: shouldShow
@@ -142,19 +305,129 @@ BarWidget {
     onTriggered: if (root.activePlayer) root.activePlayer.positionChanged()
   }
 
-  PopupCard {
+  KeyboardPanel {
     id: popup
     anchorItem: root
     bar: root.bar
     owner: root
     open: root.popupOpen
+    focusTarget: keyHandler
     contentWidth: popup.fittedContentWidth(Style.space(root.panelWidth))
     contentHeight: popup.fittedContentHeight(column.implicitHeight)
 
-    Column {
-      id: column
+    Item {
+      id: keyHandler
       anchors.fill: parent
-      spacing: Style.space(10)
+      focus: true
+      Keys.priority: Keys.BeforeItem
+
+      Keys.onPressed: function(event) {
+        // Esc or Ctrl+Q -> Close panel (VLC: Ctrl+Q quits, Esc leaves fullscreen)
+        if (event.key === Qt.Key_Escape || ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_Q)) {
+          root.close()
+          event.accepted = true
+          return
+        }
+
+        // Space / Return -> Play/Pause (VLC: Space)
+        if (event.key === Qt.Key_Space || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          root.act("playPause")
+          event.accepted = true
+          return
+        }
+
+        // 's' / 'S' -> Stop (VLC: s)
+        if (event.key === Qt.Key_S || event.text === "s" || event.text === "S") {
+          root.act("stop")
+          event.accepted = true
+          return
+        }
+
+        // 'l' / 'L' or 'r' / 'R' -> Loop / Repeat (VLC: l for Normal/Loop/Repeat)
+        if (event.key === Qt.Key_L || event.text === "l" || event.text === "L" ||
+            event.key === Qt.Key_R || event.text === "r" || event.text === "R") {
+          root.cycleRepeat()
+          event.accepted = true
+          return
+        }
+
+        // 'm' / 'M' -> Mute (VLC: m)
+        if (event.key === Qt.Key_M || event.text === "m" || event.text === "M") {
+          root.toggleMute()
+          event.accepted = true
+          return
+        }
+
+        // Volume: Ctrl + Up / Down (VLC: Ctrl+Up / Ctrl+Down)
+        if (event.modifiers & Qt.ControlModifier) {
+          if (event.key === Qt.Key_Up) {
+            root.adjustVolume(0.05)
+            event.accepted = true
+            return
+          }
+          if (event.key === Qt.Key_Down) {
+            root.adjustVolume(-0.05)
+            event.accepted = true
+            return
+          }
+        }
+
+        // Jumps with Left / Right:
+        // Shift + Left/Right -> 3s extra-short jump (VLC: Shift+Left/Right)
+        if (event.modifiers & Qt.ShiftModifier) {
+          if (event.key === Qt.Key_Left) { root.seekDelta(-3); event.accepted = true; return }
+          if (event.key === Qt.Key_Right) { root.seekDelta(3); event.accepted = true; return }
+        }
+        // Alt + Left/Right -> 10s short jump (VLC: Alt+Left/Right)
+        if (event.modifiers & Qt.AltModifier) {
+          if (event.key === Qt.Key_Left) { root.seekDelta(-10); event.accepted = true; return }
+          if (event.key === Qt.Key_Right) { root.seekDelta(10); event.accepted = true; return }
+        }
+        // Ctrl + Left/Right -> 60s medium jump (VLC: Ctrl+Left/Right)
+        if (event.modifiers & Qt.ControlModifier) {
+          if (event.key === Qt.Key_Left) { root.seekDelta(-60); event.accepted = true; return }
+          if (event.key === Qt.Key_Right) { root.seekDelta(60); event.accepted = true; return }
+        }
+
+        // 'n' / 'N' or Right arrow -> Next track (VLC: n)
+        if (event.key === Qt.Key_N || event.text === "n" || event.text === "N" || event.key === Qt.Key_Right) {
+          root.act("next")
+          event.accepted = true
+          return
+        }
+
+        // 'p' / 'P' or Left arrow -> Previous track (VLC: p)
+        if (event.key === Qt.Key_P || event.text === "p" || event.text === "P" || event.key === Qt.Key_Left) {
+          root.act("previous")
+          event.accepted = true
+          return
+        }
+
+        // Up / Down (without Ctrl) -> Switch source player if multiple players exist
+        if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
+          if (root.sourcePlayers && root.sourcePlayers.length > 1) {
+            var curIdx = -1
+            for (var i = 0; i < root.sourcePlayers.length; i++) {
+              if (root.playerKey(root.sourcePlayers[i]) === root.playerKey(root.activePlayer)) {
+                curIdx = i
+                break
+              }
+            }
+            var delta = event.key === Qt.Key_Down ? 1 : -1
+            var nextIdx = (curIdx + delta + root.sourcePlayers.length) % root.sourcePlayers.length
+            root.selectPlayer(root.playerKey(root.sourcePlayers[nextIdx]))
+          }
+          event.accepted = true
+          return
+        }
+      }
+
+      Column {
+        id: column
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        spacing: Style.space(10)
 
       // ── App header ────────────────────────────────────────────────
       Row {
@@ -277,6 +550,8 @@ BarWidget {
             iconText: "󰒮"
             foreground: root.bar.foreground
             enabled: root.activePlayer && root.activePlayer.canGoPrevious
+            tooltip: "上一曲"
+            bar: root.bar
             onClicked: root.act("previous")
           }
 
@@ -288,6 +563,8 @@ BarWidget {
             iconOffsetY: -iconSize * 0.08
             foreground: root.bar.foreground
             enabled: root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause)
+            tooltip: root.isPlaying ? "暂停" : "播放"
+            bar: root.bar
             onClicked: root.act("playPause")
           }
 
@@ -296,7 +573,24 @@ BarWidget {
             iconText: "󰒭"
             foreground: root.bar.foreground
             enabled: root.activePlayer && root.activePlayer.canGoNext
+            tooltip: "下一曲"
+            bar: root.bar
             onClicked: root.act("next")
+          }
+
+          ControlButton {
+            id: repeatBtn
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: {
+              if (root.activePlayer && root.activePlayer.loopState === MprisLoopState.Track) return "󰑘"
+              if (root.activePlayer && root.activePlayer.loopState === MprisLoopState.Playlist) return "󰑖"
+              return "󰑗"
+            }
+            foreground: root.isLoopActive ? Color.accent : Qt.darker(root.bar.foreground, 1.8)
+            enabled: root.activePlayer && (root.activePlayer.loopSupported !== false)
+            tooltip: root.loopStatusText
+            bar: root.bar
+            onClicked: root.cycleRepeat()
           }
         }
       }
@@ -365,7 +659,7 @@ BarWidget {
             required property var modelData
             readonly property var player: modelData
             readonly property bool selected: root.activePlayer && player
-              && root.mediaService.playerKey(root.activePlayer) === root.mediaService.playerKey(player)
+              && root.playerKey(root.activePlayer) === root.playerKey(player)
             readonly property string sourceApp: player ? (player.identity || player.desktopEntry || "Media source") : "Media source"
             readonly property string sourceTrack: player ? [player.trackTitle, player.trackArtist].filter(Boolean).join(" · ") : ""
 
@@ -425,11 +719,12 @@ BarWidget {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: if (root.mediaService) root.mediaService.selectPlayer(root.mediaService.playerKey(sourceRow.player))
+              onClicked: root.selectPlayer(root.playerKey(sourceRow.player))
             }
           }
         }
       }
     }
   }
+}
 }

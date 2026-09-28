@@ -20,7 +20,7 @@
     "defaultSection": "right",
     "defaults": {
       "hideWhenPaused": false,
-      "panelWidth": 340
+      "panelWidth": 360
     },
     "schema": [
       {
@@ -33,7 +33,7 @@
         "key": "panelWidth",
         "type": "number",
         "label": "Panel width (px)",
-        "defaultValue": 340
+        "defaultValue": 360
       }
     ]
   }
