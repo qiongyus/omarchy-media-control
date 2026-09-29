@@ -171,6 +171,20 @@ BarWidget {
     }
   }
 
+  readonly property bool isShuffleActive: activePlayer && (activePlayer.shuffleSupported !== false) && activePlayer.shuffle === true
+  readonly property string shuffleStatusText: {
+    if (!activePlayer || activePlayer.shuffleSupported === false) return "随机播放: 不支持"
+    return activePlayer.shuffle ? "随机播放: 开启" : "随机播放: 关闭"
+  }
+
+  function toggleShuffle(): void {
+    var p = root.activePlayer
+    if (!p || p.shuffleSupported === false) return
+    if (typeof p.shuffle !== "undefined") {
+      p.shuffle = !p.shuffle
+    }
+  }
+
   property real savedVolume: 1.0
 
   function seekDelta(seconds): void {
@@ -203,7 +217,7 @@ BarWidget {
     }
   }
 
-  // omarchy-shell debba.media-control toggle|open|close|playPause|next|previous|repeat|stop
+  // omarchy-shell debba.media-control toggle|open|close|playPause|next|previous|repeat|shuffle|stop
   IpcHandler {
     target: "debba.media-control"
     function toggle(): void { root.broadcast("togglePopup") }
@@ -215,6 +229,8 @@ BarWidget {
     function stop(): void { root.act("stop") }
     function repeat(): void { root.cycleRepeat() }
     function cycleRepeat(): void { root.cycleRepeat() }
+    function shuffle(): void { root.toggleShuffle() }
+    function toggleShuffle(): void { root.toggleShuffle() }
   }
 
   function formatTime(seconds) {
@@ -248,6 +264,8 @@ BarWidget {
       else if (p.canPause) p.pause()
     } else if (action === "repeat" || action === "cycleRepeat") {
       root.cycleRepeat()
+    } else if (action === "shuffle" || action === "toggleShuffle") {
+      root.toggleShuffle()
     } else if (action === "play") {
       if (p.canPlay) p.play()
       else if (p.canTogglePlaying) p.togglePlaying()
@@ -343,9 +361,15 @@ BarWidget {
           return
         }
 
-        // 'l' / 'L' or 'r' / 'R' -> Loop / Repeat (VLC: l for Normal/Loop/Repeat)
-        if (event.key === Qt.Key_L || event.text === "l" || event.text === "L" ||
-            event.key === Qt.Key_R || event.text === "r" || event.text === "R") {
+        // 'r' / 'R' -> Random / Shuffle (VLC: r)
+        if (event.key === Qt.Key_R || event.text === "r" || event.text === "R") {
+          root.toggleShuffle()
+          event.accepted = true
+          return
+        }
+
+        // 'l' / 'L' -> Normal/Loop/Repeat (VLC: l)
+        if (event.key === Qt.Key_L || event.text === "l" || event.text === "L") {
           root.cycleRepeat()
           event.accepted = true
           return
@@ -591,6 +615,17 @@ BarWidget {
             tooltip: root.loopStatusText
             bar: root.bar
             onClicked: root.cycleRepeat()
+          }
+
+          ControlButton {
+            id: shuffleBtn
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: "󰒝"
+            foreground: root.isShuffleActive ? Color.accent : Qt.darker(root.bar.foreground, 1.8)
+            enabled: root.activePlayer && (root.activePlayer.shuffleSupported !== false)
+            tooltip: root.shuffleStatusText
+            bar: root.bar
+            onClicked: root.toggleShuffle()
           }
         }
       }

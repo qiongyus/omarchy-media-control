@@ -13,7 +13,7 @@ A single play/pause glyph appears in the bar only while media is playing. Click 
 - **Seek bar** – elapsed and total time, draggable when the player supports seeking (shown only when the player reports a track length).
 - **Multiple players** – when more than one MPRIS source is active (browser + Spotify, say) the panel lists them and lets you switch the active one.
 - **Quick actions on the indicator** – right click toggles play/pause, middle click skips to the next track, the mouse wheel goes to previous/next.
-- **IPC surface** – bind keys or script it: `omarchy-shell debba.media-control toggle|open|close|playPause|next|previous`.
+- **IPC surface** – bind keys or script it: `omarchy-shell debba.media-control toggle|open|close|playPause|next|previous|repeat|shuffle|stop`.
 - **Native look** – built with Omarchy's own UI components, so it follows your theme, bar position and font.
 
 Works with anything that speaks MPRIS: Firefox / Zen / Chromium tabs, Spotify, mpv (with `mpv-mpris`), VLC, Rhythmbox, and so on. Under the hood it reuses Omarchy's built-in `omarchy.media` service, so media keys and the OSD stay in sync.
@@ -54,7 +54,27 @@ omarchy plugin disable omarchy.media
 | Drag the seek bar               | Seek (if the player allows it) |
 | Click a source in the list      | Make that player the active one |
 
-### Keyboard shortcut
+### Keyboard shortcuts (when panel is focused)
+
+Matches VLC keyboard shortcuts:
+
+| Key | Action |
+|-----|--------|
+| `Space` / `Enter` | Play / Pause |
+| `s` | Stop |
+| `n` / `Right` | Next track |
+| `p` / `Left` | Previous track |
+| `l` | Toggle Repeat / Loop (Off / Playlist / Track) |
+| `r` | Toggle Shuffle / Random |
+| `m` | Mute / Unmute |
+| `Ctrl + Up` / `Ctrl + Down` | Volume up / down (5%) |
+| `Shift + Left` / `Shift + Right` | Jump backward / forward 3s |
+| `Alt + Left` / `Alt + Right` | Jump backward / forward 10s |
+| `Ctrl + Left` / `Ctrl + Right` | Jump backward / forward 60s |
+| `Up` / `Down` | Switch active player (when multiple exist) |
+| `Esc` / `Ctrl + Q` | Close panel |
+
+### Global shortcut
 
 Add to `~/.config/hypr/bindings.lua`:
 
